@@ -1,15 +1,14 @@
 """
 proposer.py — LLM-driven strategy proposer for EvoAgent.
 
-The proposer calls Claude (claude-sonnet-4-20250514) with a carefully
-engineered prompt that includes the full strategy history and the most
-recent reflection. It asks Claude to:
+Calls Google Gemini with the full strategy history and the most recent
+reflection. Asks the model to:
   1. Identify the weakest question categories from the last eval.
   2. Form a specific hypothesis about why the current strategy fails there.
   3. Generate a new strategy (prompt template + CoT format + few-shot examples)
      that directly addresses that hypothesis.
 
-Claude's response must be valid JSON matching the ProposedStrategy schema.
+The response must be valid JSON matching the ProposedStrategy schema.
 We use Pydantic for validation and retry with exponential backoff on failure.
 """
 
@@ -22,7 +21,7 @@ import time
 import uuid
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
 from pydantic import BaseModel, Field, field_validator
 
 from strategy import (
@@ -36,13 +35,14 @@ from strategy import (
 
 logger = logging.getLogger(__name__)
 
+
 # ------------------------------------------------------------------
-# Pydantic schema for Claude's structured output
+# Pydantic schema for Gemini's structured output
 # ------------------------------------------------------------------
 
 
 class ProposedFewShotExample(BaseModel):
-    """One few-shot example as proposed by Claude."""
+    """One few-shot example as proposed by the meta-agent."""
 
     passage: str = Field(description="A short Vietnamese reading passage.")
     question: str = Field(description="A multiple-choice question about the passage.")
@@ -63,20 +63,10 @@ class ProposedFewShotExample(BaseModel):
 
 
 class ProposedStrategy(BaseModel):
-    """
-    The full strategy proposal returned by Claude.
-
-    Claude is instructed to fill every field with concrete values, not
-    placeholders. The prompt_template must be a valid Python format string
-    using only the keys: passage, question, choices, few_shot_block,
-    cot_instruction.
-    """
+    """The full strategy proposal returned by the meta-agent."""
 
     hypothesis: str = Field(
-        description=(
-            "A specific, testable hypothesis about why the previous strategy "
-            "failed and what this new strategy will fix."
-        )
+        description="A specific, testable hypothesis about why the previous strategy failed."
     )
     prompt_template: str = Field(
         description=(
@@ -90,13 +80,10 @@ class ProposedStrategy(BaseModel):
     )
     few_shot_examples: list[ProposedFewShotExample] = Field(
         default_factory=list,
-        description="Zero to three few-shot examples. Keep passages short (≤100 words).",
+        description="Zero to three few-shot examples. Keep passages short (<=100 words).",
     )
     reasoning: str = Field(
-        description=(
-            "Your internal reasoning about why this strategy should outperform "
-            "the previous one. This is logged but not shown to the model."
-        )
+        description="Your internal reasoning about why this strategy should outperform the previous one."
     )
 
     @field_validator("cot_format")
@@ -109,7 +96,7 @@ class ProposedStrategy(BaseModel):
 
 
 # ------------------------------------------------------------------
-# System and user prompt builders
+# Prompt builders
 # ------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
@@ -117,8 +104,8 @@ You are an expert NLP researcher specialising in Vietnamese reading comprehensio
 Your task is to design better prompting strategies for a Qwen2.5-7B-Instruct model
 that answers multiple-choice questions from the ViMMRC 2.0 dataset.
 
-ViMMRC 2.0 contains passages from Vietnamese literature textbooks (grades 6–12).
-Each example has a passage (100–400 words), a question, and four answer choices (A/B/C/D).
+ViMMRC 2.0 contains passages from Vietnamese literature textbooks (grades 6-12).
+Each example has a passage (100-400 words), a question, and four answer choices (A/B/C/D).
 
 You will be given:
   - The history of all strategies tried so far with their dev accuracies.
@@ -132,7 +119,7 @@ a strategy that isolates and tests it.
 IMPORTANT CONSTRAINTS:
   - The prompt_template must be a Python format string using ONLY these keys:
     {passage}, {question}, {choices}, {few_shot_block}, {cot_instruction}
-  - Few-shot passages must be in Vietnamese and ≤100 words each.
+  - Few-shot passages must be in Vietnamese and <=100 words each.
   - Do not propose a strategy identical to one already tried.
   - Be specific: vague strategies like "add more detail" are not helpful.
 
@@ -141,8 +128,8 @@ no preamble, no explanation outside the JSON.
 
 Schema:
 {
-  "hypothesis": "string — specific testable hypothesis",
-  "prompt_template": "string — Python format string",
+  "hypothesis": "string",
+  "prompt_template": "string",
   "cot_format": "none | stepbystep | chain",
   "few_shot_examples": [
     {
@@ -153,18 +140,17 @@ Schema:
       "reasoning": "string or null"
     }
   ],
-  "reasoning": "string — your internal reasoning"
+  "reasoning": "string"
 }
 """
 
 
 def _build_history_block(history: StrategyHistory) -> str:
-    """Format the strategy history into a concise, information-dense block."""
     if not history.strategies:
         return "No strategies have been evaluated yet. This is the first proposal."
 
     lines = ["=== Strategy History ==="]
-    for i, (s, r) in enumerate(zip(history.strategies, history.reflections)):
+    for s, r in zip(history.strategies, history.reflections):
         acc = (
             f"{s.metadata.dev_accuracy:.3f}"
             if s.metadata.dev_accuracy is not None
@@ -177,13 +163,12 @@ def _build_history_block(history: StrategyHistory) -> str:
         )
         lines.append(f"  Template (first 200 chars): {s.prompt_template[:200]!r}")
         if r is not None:
-            lines.append(f"  Hypothesis that guided this strategy: {r.hypothesis[:300]}")
+            lines.append(f"  Hypothesis: {r.hypothesis[:300]}")
             lines.append(f"  Accuracy by type: {r.accuracy_by_type}")
     return "\n".join(lines)
 
 
 def _build_reflection_block(history: StrategyHistory) -> str:
-    """Format the most recent reflection."""
     ref = history.latest_reflection()
     if ref is None:
         return "No reflections available yet."
@@ -192,7 +177,7 @@ def _build_reflection_block(history: StrategyHistory) -> str:
         "=== Most Recent Reflection ===",
         f"Strategy: {ref.strategy_id[:8]}",
         f"Accuracy by type: {json.dumps(ref.accuracy_by_type, ensure_ascii=False)}",
-        f"\nTop failure cases:",
+        "\nTop failure cases:",
     ]
     for fc in ref.top_failures[:5]:
         lines.append(
@@ -228,35 +213,42 @@ def _build_user_message(history: StrategyHistory) -> str:
 
 def propose(
     history: StrategyHistory,
-    client: Optional[anthropic.Anthropic] = None,
-    model: str = "claude-sonnet-4-20250514",
+    api_key: Optional[str] = None,
+    model: str = "gemini-2.0-flash",
     max_retries: int = 4,
 ) -> tuple[Strategy, int]:
     """
-    Call Claude to propose a new strategy based on the history and latest reflection.
+    Call Gemini to propose a new strategy based on the history and latest reflection.
 
     Parameters
     ----------
     history:
         The full strategy history including reflections.
-    client:
-        An instantiated anthropic.Anthropic client. If None, one is created
-        using the ANTHROPIC_API_KEY environment variable.
+    api_key:
+        Google Gemini API key. If None, reads from GOOGLE_API_KEY env var.
     model:
-        Claude model to use for proposing.
+        Gemini model to use. gemini-2.0-flash is free and fast.
     max_retries:
         Number of retries on API or validation failure (exponential backoff).
 
     Returns
     -------
-    (strategy, total_tokens) where total_tokens is input + output tokens used.
+    (strategy, total_tokens) where total_tokens is an estimate.
 
     Raises
     ------
     RuntimeError if all retries are exhausted.
     """
-    if client is None:
-        client = anthropic.Anthropic()
+    import os
+    key = api_key or os.environ.get("GOOGLE_API_KEY", "")
+    if not key:
+        raise RuntimeError("Set GOOGLE_API_KEY environment variable.")
+    genai.configure(api_key=key)
+
+    gemini = genai.GenerativeModel(
+        model_name=model,
+        system_instruction=_SYSTEM_PROMPT,
+    )
 
     user_message = _build_user_message(history)
     next_iteration = len(history.strategies)
@@ -266,36 +258,24 @@ def propose(
 
     for attempt in range(max_retries):
         if attempt > 0:
-            wait = 2 ** attempt  # 2, 4, 8 seconds
+            wait = 2 ** attempt
             logger.warning(
-                "Propose attempt %d/%d failed (%s). Retrying in %ds…",
-                attempt,
-                max_retries,
-                last_error,
-                wait,
+                "Propose attempt %d/%d failed (%s). Retrying in %ds...",
+                attempt, max_retries, last_error, wait,
             )
             time.sleep(wait)
 
         try:
             logger.info(
                 "Calling %s for strategy proposal (iteration %d, attempt %d).",
-                model,
-                next_iteration,
-                attempt + 1,
+                model, next_iteration, attempt + 1,
             )
-            response = client.messages.create(
-                model=model,
-                max_tokens=2048,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            )
+            response = gemini.generate_content(user_message)
+            raw_text = response.text.strip()
 
-            total_tokens = response.usage.input_tokens + response.usage.output_tokens
-            raw_text = response.content[0].text.strip()
+            logger.debug("Raw response (%d chars): %s...", len(raw_text), raw_text[:300])
 
-            logger.debug("Raw Claude response (%d chars): %s…", len(raw_text), raw_text[:300])
-
-            # Strip any accidental markdown fencing.
+            # Strip accidental markdown fencing.
             if raw_text.startswith("```"):
                 raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
                 raw_text = re.sub(r"\s*```$", "", raw_text)
@@ -303,22 +283,18 @@ def propose(
             proposed = ProposedStrategy.model_validate_json(raw_text)
             strategy = _proposed_to_strategy(proposed, next_iteration, parent_id)
 
+            # Gemini doesn't return token counts on free tier; estimate from chars.
+            total_tokens = len(user_message) // 4 + len(raw_text) // 4
+
             logger.info(
-                "Proposal accepted: id=%s, cot=%s, few_shot=%d, tokens=%d.",
-                strategy.id[:8],
-                strategy.cot_format.value,
-                len(strategy.few_shot_examples),
-                total_tokens,
+                "Proposal accepted: id=%s, cot=%s, few_shot=%d.",
+                strategy.id[:8], strategy.cot_format.value, len(strategy.few_shot_examples),
             )
             return strategy, total_tokens
 
-        except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError) as exc:
+        except Exception as exc:
             last_error = exc
-            logger.warning("API error on attempt %d: %s", attempt + 1, exc)
-
-        except (json.JSONDecodeError, ValueError) as exc:
-            last_error = exc
-            logger.warning("JSON/validation error on attempt %d: %s", attempt + 1, exc)
+            logger.warning("Error on attempt %d: %s", attempt + 1, exc)
 
     raise RuntimeError(
         f"Proposer failed after {max_retries} attempts. Last error: {last_error}"
@@ -330,7 +306,6 @@ def _proposed_to_strategy(
     iteration: int,
     parent_id: Optional[str],
 ) -> Strategy:
-    """Convert a validated ProposedStrategy Pydantic model into a Strategy dataclass."""
     few_shot = [
         FewShotExample(
             passage=ex.passage,
@@ -352,5 +327,3 @@ def _proposed_to_strategy(
             parent_id=parent_id,
         ),
     )
-
-

@@ -1,14 +1,12 @@
 """
 reflector.py — LLM-driven reflection on strategy performance.
 
-After each evaluation the reflector calls Claude with the eval results to
-produce a structured Reflection. This reflection is stored in the history and
-passed to the next propose() call so the proposer can build on concrete
-evidence rather than guessing.
+Calls Google Gemini with the eval results to produce a structured Reflection.
+This reflection is stored in the history and passed to the next propose() call.
 
 The reflection includes:
-  - Accuracy by question type (computed from per-question results)
-  - Top-5 failure cases with brief analysis
+  - Accuracy by question type
+  - Top-5 failure cases with analysis
   - A concrete, falsifiable hypothesis for the next iteration
   - A prose summary
 """
@@ -21,7 +19,7 @@ import re
 import time
 from typing import Optional
 
-import anthropic
+import google.generativeai as genai
 from pydantic import BaseModel, Field
 
 from executor import EvalResult, QuestionResult
@@ -31,53 +29,28 @@ logger = logging.getLogger(__name__)
 
 
 # ------------------------------------------------------------------
-# Pydantic schema for Claude's structured reflection output
+# Pydantic schema for structured reflection output
 # ------------------------------------------------------------------
 
 
 class FailureAnalysis(BaseModel):
-    """Analysis of a single failure case."""
-
-    question: str = Field(description="The question text (truncated if long).")
-    gold_answer: str = Field(description="The correct answer letter.")
-    predicted_answer: Optional[str] = Field(description="What the model predicted.")
-    raw_output_excerpt: str = Field(description="First 200 chars of model output.")
-    analysis: str = Field(
-        description="Why did the model get this wrong? Be specific."
-    )
+    question: str
+    gold_answer: str
+    predicted_answer: Optional[str]
+    raw_output_excerpt: str
+    analysis: str
 
 
 class StructuredReflection(BaseModel):
-    """The full structured reflection returned by Claude."""
-
-    accuracy_by_type: dict[str, float] = Field(
-        description=(
-            "Accuracy for each question type as a float 0–1. "
-            "Keys must match the types provided."
-        )
-    )
-    weakest_type: str = Field(
-        description="The question type with the lowest accuracy."
-    )
-    top_failures: list[FailureAnalysis] = Field(
-        description="Analysis of the 5 most informative failure cases.",
-        max_length=5,
-    )
-    hypothesis: str = Field(
-        description=(
-            "A specific, testable hypothesis about why the strategy fails "
-            "on the weakest type and what a better strategy should do. "
-            "Must be actionable: a proposer should be able to directly "
-            "derive a new prompt template from this hypothesis."
-        )
-    )
-    summary: str = Field(
-        description="One paragraph summarising the reflection and its implications."
-    )
+    accuracy_by_type: dict[str, float]
+    weakest_type: str
+    top_failures: list[FailureAnalysis]
+    hypothesis: str
+    summary: str
 
 
 # ------------------------------------------------------------------
-# System and user prompt builders
+# Prompt builders
 # ------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
@@ -89,18 +62,16 @@ You will receive:
   2. Overall accuracy and per-category accuracy.
   3. The 10 worst failure cases with the model's raw output.
 
-Your job is to produce a structured reflection that will guide the next
-strategy proposal. Be concrete and diagnostic, not generic.
+Produce a structured reflection that will guide the next strategy proposal.
+Be concrete and diagnostic, not generic.
 
 Bad hypothesis: "The model needs to understand the passage better."
 Good hypothesis: "The model fails on 'cause_effect' questions because the
-  zero-shot prompt does not ask it to explicitly identify causal chains.
-  A prompt that asks 'What caused X according to the passage?' before
-  presenting the options should improve accuracy on this type."
+  prompt does not ask it to identify causal chains explicitly. A prompt that
+  asks 'What caused X according to the passage?' before presenting options
+  should improve accuracy on this type."
 
-Respond ONLY with valid JSON matching the schema below. No markdown, no preamble.
-
-Schema:
+Respond ONLY with valid JSON matching this schema:
 {
   "accuracy_by_type": {"type_name": float, ...},
   "weakest_type": "string",
@@ -108,7 +79,7 @@ Schema:
     {
       "question": "string",
       "gold_answer": "A|B|C|D",
-      "predicted_answer": "A|B|C|D|null",
+      "predicted_answer": "A|B|C|D or null",
       "raw_output_excerpt": "string",
       "analysis": "string"
     }
@@ -185,12 +156,12 @@ def _build_user_message(strategy: Strategy, eval_result: EvalResult) -> str:
 def reflect(
     strategy: Strategy,
     eval_result: EvalResult,
-    client: Optional[anthropic.Anthropic] = None,
-    model: str = "claude-sonnet-4-20250514",
+    api_key: Optional[str] = None,
+    model: str = "gemini-2.0-flash",
     max_retries: int = 4,
 ) -> tuple[Reflection, int]:
     """
-    Call Claude to reflect on a strategy's evaluation results.
+    Call Gemini to reflect on a strategy's evaluation results.
 
     Parameters
     ----------
@@ -198,24 +169,27 @@ def reflect(
         The strategy that was evaluated.
     eval_result:
         The results from executor.evaluate().
-    client:
-        An instantiated anthropic.Anthropic client. If None, a new one is
-        created using the ANTHROPIC_API_KEY environment variable.
+    api_key:
+        Google Gemini API key. If None, reads from GOOGLE_API_KEY env var.
     model:
-        Claude model to use.
+        Gemini model to use.
     max_retries:
         Number of retries on API or validation failure.
 
     Returns
     -------
-    (reflection, total_tokens) — the structured Reflection and tokens used.
-
-    Raises
-    ------
-    RuntimeError if all retries are exhausted.
+    (reflection, total_tokens) — the structured Reflection and estimated tokens.
     """
-    if client is None:
-        client = anthropic.Anthropic()
+    import os
+    key = api_key or os.environ.get("GOOGLE_API_KEY", "")
+    if not key:
+        raise RuntimeError("Set GOOGLE_API_KEY environment variable.")
+    genai.configure(api_key=key)
+
+    gemini = genai.GenerativeModel(
+        model_name=model,
+        system_instruction=_SYSTEM_PROMPT,
+    )
 
     user_message = _build_user_message(strategy, eval_result)
     last_error: Optional[Exception] = None
@@ -224,32 +198,20 @@ def reflect(
         if attempt > 0:
             wait = 2 ** attempt
             logger.warning(
-                "Reflect attempt %d/%d failed (%s). Retrying in %ds…",
-                attempt,
-                max_retries,
-                last_error,
-                wait,
+                "Reflect attempt %d/%d failed (%s). Retrying in %ds...",
+                attempt, max_retries, last_error, wait,
             )
             time.sleep(wait)
 
         try:
             logger.info(
                 "Calling %s for reflection on strategy %s (attempt %d).",
-                model,
-                strategy.id[:8],
-                attempt + 1,
+                model, strategy.id[:8], attempt + 1,
             )
-            response = client.messages.create(
-                model=model,
-                max_tokens=2048,
-                system=_SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_message}],
-            )
+            response = gemini.generate_content(user_message)
+            raw_text = response.text.strip()
 
-            total_tokens = response.usage.input_tokens + response.usage.output_tokens
-            raw_text = response.content[0].text.strip()
-
-            logger.debug("Raw reflection (%d chars): %s…", len(raw_text), raw_text[:300])
+            logger.debug("Raw reflection (%d chars): %s...", len(raw_text), raw_text[:300])
 
             if raw_text.startswith("```"):
                 raw_text = re.sub(r"^```(?:json)?\s*", "", raw_text)
@@ -257,7 +219,6 @@ def reflect(
 
             structured = StructuredReflection.model_validate_json(raw_text)
 
-            # Build failure dicts from the top failures for storage.
             failure_dicts = [
                 {
                     "question": f.question,
@@ -279,20 +240,16 @@ def reflect(
                 raw_response=raw_text,
             )
 
+            total_tokens = len(user_message) // 4 + len(raw_text) // 4
+
             logger.info(
-                "Reflection complete. Weakest type: %s. Tokens: %d.",
-                structured.weakest_type,
-                total_tokens,
+                "Reflection complete. Weakest type: %s.", structured.weakest_type
             )
             return reflection, total_tokens
 
-        except (anthropic.APIError, anthropic.APIConnectionError, anthropic.RateLimitError) as exc:
+        except Exception as exc:
             last_error = exc
-            logger.warning("API error on attempt %d: %s", attempt + 1, exc)
-
-        except (json.JSONDecodeError, ValueError) as exc:
-            last_error = exc
-            logger.warning("JSON/validation error on attempt %d: %s", attempt + 1, exc)
+            logger.warning("Error on attempt %d: %s", attempt + 1, exc)
 
     raise RuntimeError(
         f"Reflector failed after {max_retries} attempts. Last error: {last_error}"
@@ -300,8 +257,7 @@ def reflect(
 
 
 def _find_question_type(question_text: str, eval_result: EvalResult) -> str:
-    """Look up the question type from per-question records by matching text."""
     for r in eval_result.per_question:
-        if r.question == question_text or r.question[:100] == question_text[:100]:
+        if r.question[:100] == question_text[:100]:
             return r.question_type
     return "unknown"

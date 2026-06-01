@@ -9,8 +9,8 @@ sentencepiece>=0.1.99          # Qwen tokeniser dependency
 datasets>=2.18.0
 huggingface-hub>=0.22.0
 
-# Anthropic API (meta-agent calls)
-anthropic>=0.26.0
+# Google Gemini API (meta-agent calls)
+google-generativeai>=0.8.0
 
 # Pydantic for structured output validation
 pydantic>=2.5.0

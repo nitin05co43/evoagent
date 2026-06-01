@@ -126,12 +126,12 @@ def parse_args() -> argparse.Namespace:
         help="Disable 4-bit quantization (requires more VRAM; use for testing on GPU with ≥24 GB).",
     )
 
-    # Claude
+    # Gemini
     parser.add_argument(
-        "--claude-model",
+        "--gemini-model",
         type=str,
-        default="claude-sonnet-4-20250514",
-        help="Claude model ID for propose and reflect calls.",
+        default="gemini-2.0-flash",
+        help="Gemini model ID for propose and reflect calls.",
     )
 
     # Output
@@ -256,7 +256,7 @@ def main() -> None:
         output_dir=output_dir,
         resume_from=Path(args.resume) if args.resume else None,
         early_stop_accuracy=args.early_stop,
-        claude_model=args.claude_model,
+        gemini_model=args.gemini_model,
     )
 
     # ----------------------------------------------------------------

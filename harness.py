@@ -20,7 +20,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-import anthropic
 from datasets import Dataset
 
 from executor import EvalResult, evaluate
@@ -66,8 +65,8 @@ def run_evoagent(
     output_dir: Path,
     resume_from: Optional[Path] = None,
     early_stop_accuracy: float = 1.0,
-    anthropic_client: Optional[anthropic.Anthropic] = None,
-    claude_model: str = "claude-sonnet-4-20250514",
+    gemini_api_key: Optional[str] = None,
+    gemini_model: str = "gemini-2.0-flash",
 ) -> StrategyHistory:
     """
     Run the EvoAgent loop for up to T iterations.
@@ -160,8 +159,8 @@ def run_evoagent(
         else:
             strategy, propose_tokens = propose(
                 history,
-                client=anthropic_client,
-                model=claude_model,
+                api_key=gemini_api_key,
+                model=gemini_model,
             )
             budget.add_claude(propose_tokens)
             claude_tokens_this_iter += propose_tokens
@@ -237,8 +236,8 @@ def run_evoagent(
                 reflection, reflect_tokens = reflect(
                     strategy=strategy,
                     eval_result=dev_result,
-                    client=anthropic_client,
-                    model=claude_model,
+                    api_key=gemini_api_key,
+                    model=gemini_model,
                 )
                 budget.add_claude(reflect_tokens)
                 claude_tokens_this_iter += reflect_tokens

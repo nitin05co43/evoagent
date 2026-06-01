@@ -187,8 +187,10 @@ def load_dataset_splits(
             "The 'datasets' library is required. Install with: pip install datasets"
         )
 
+    import os
+    hf_token = os.environ.get("HF_TOKEN")
     logger.info("Loading dataset '%s' from HuggingFace…", dataset_id)
-    ds = load_dataset(dataset_id)
+    ds = load_dataset(dataset_id, token=hf_token)
 
     train_split = ds["train"].shuffle(seed=seed)
     train_subset = train_split.select(range(min(train_size, len(train_split))))

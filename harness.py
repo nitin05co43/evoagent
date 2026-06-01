@@ -121,9 +121,6 @@ def run_evoagent(
             len(history),
         )
 
-    if anthropic_client is None:
-        anthropic_client = anthropic.Anthropic()
-
     budget = TokenBudget()
     start_iteration = len(history.strategies)
 

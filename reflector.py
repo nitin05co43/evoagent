@@ -19,7 +19,8 @@ import re
 import time
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from pydantic import BaseModel, Field
 
 from executor import EvalResult, QuestionResult
@@ -184,13 +185,7 @@ def reflect(
     key = api_key or os.environ.get("GOOGLE_API_KEY", "")
     if not key:
         raise RuntimeError("Set GOOGLE_API_KEY environment variable.")
-    genai.configure(api_key=key)
-
-    gemini = genai.GenerativeModel(
-        model_name=model,
-        system_instruction=_SYSTEM_PROMPT,
-    )
-
+    client = genai.Client(api_key=key)
     user_message = _build_user_message(strategy, eval_result)
     last_error: Optional[Exception] = None
 
@@ -208,7 +203,13 @@ def reflect(
                 "Calling %s for reflection on strategy %s (attempt %d).",
                 model, strategy.id[:8], attempt + 1,
             )
-            response = gemini.generate_content(user_message)
+            response = client.models.generate_content(
+                model=model,
+                contents=user_message,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=_SYSTEM_PROMPT,
+                ),
+            )
             raw_text = response.text.strip()
 
             logger.debug("Raw reflection (%d chars): %s...", len(raw_text), raw_text[:300])

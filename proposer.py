@@ -21,7 +21,8 @@ import time
 import uuid
 from typing import Optional
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types as genai_types
 from pydantic import BaseModel, Field, field_validator
 
 from strategy import (
@@ -243,13 +244,8 @@ def propose(
     key = api_key or os.environ.get("GOOGLE_API_KEY", "")
     if not key:
         raise RuntimeError("Set GOOGLE_API_KEY environment variable.")
-    genai.configure(api_key=key)
 
-    gemini = genai.GenerativeModel(
-        model_name=model,
-        system_instruction=_SYSTEM_PROMPT,
-    )
-
+    client = genai.Client(api_key=key)
     user_message = _build_user_message(history)
     next_iteration = len(history.strategies)
     parent_id = history.latest_strategy().id if history.latest_strategy() else None
@@ -270,7 +266,13 @@ def propose(
                 "Calling %s for strategy proposal (iteration %d, attempt %d).",
                 model, next_iteration, attempt + 1,
             )
-            response = gemini.generate_content(user_message)
+            response = client.models.generate_content(
+                model=model,
+                contents=user_message,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=_SYSTEM_PROMPT,
+                ),
+            )
             raw_text = response.text.strip()
 
             logger.debug("Raw response (%d chars): %s...", len(raw_text), raw_text[:300])

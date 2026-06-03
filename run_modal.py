@@ -9,7 +9,7 @@ image = (
     )
     .pip_install(
         "torch",
-        "vllm",
+        "vllm==0.5.5",
         "transformers",
         "accelerate",
         "datasets",
@@ -20,7 +20,6 @@ image = (
         "scipy",
         "huggingface-hub",
     )
-    .run_commands("pip uninstall -y flashinfer || true")  # flashinfer breaks on T4 (compute 7.5)
     .add_local_dir(".", remote_path="/evoagent")
 )
 

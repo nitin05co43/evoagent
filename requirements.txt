@@ -1,8 +1,8 @@
 # Core ML / inference
 torch>=2.1.0
-transformers>=4.40.0
+vllm==0.5.5                    # pinned: 0.6+ uses flashinfer which breaks on T4 (compute 7.5)
+transformers>=4.40.0           # tokenizer + apply_chat_template
 accelerate>=0.27.0
-bitsandbytes>=0.43.0          # 4-bit quantisation on CUDA
 sentencepiece>=0.1.99          # Qwen tokeniser dependency
 
 # HuggingFace dataset loading

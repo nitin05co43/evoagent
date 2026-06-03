@@ -134,7 +134,6 @@ class QwenInference:
             gpu_memory_utilization=self.gpu_memory_utilization,
             max_model_len=self.max_model_len,
             trust_remote_code=True,
-            enforce_eager=True,  # disable CUDA graphs; avoids flashinfer crash on T4
         )
 
         # Load tokenizer separately for apply_chat_template / count_tokens.
@@ -169,17 +168,17 @@ class QwenInference:
             top_p=0.95 if self.temperature > 0.0 else 1.0,
         )
 
-        # Truncate prompts that exceed the context budget, preserving the end
-        # (which contains the question/choices) by trimming from the passage.
+        # Truncate prompts that exceed the context budget.
         max_input = self.max_model_len - self.max_new_tokens
-        tokenized_inputs = []
+        truncated = []
         for p in prompts:
             ids = self._tokenizer.encode(p, add_special_tokens=False)
             if len(ids) > max_input:
                 ids = ids[:max_input]
-            tokenized_inputs.append({"prompt_token_ids": ids})
+                p = self._tokenizer.decode(ids, skip_special_tokens=True)
+            truncated.append(p)
 
-        outputs = self._llm.generate(tokenized_inputs, sampling_params)
+        outputs = self._llm.generate(truncated, sampling_params)
 
         results: list[GenerationResult] = []
         for req_output in outputs:

@@ -3,22 +3,13 @@ import modal
 app = modal.App("evoagent")
 
 image = (
-    modal.Image.from_registry(
-        "nvidia/cuda:12.4.0-devel-ubuntu22.04",
-        add_python="3.11",
-    )
-    .pip_install(
-        "torch",
-        "vllm==0.5.5",
-        "transformers",
-        "accelerate",
-        "datasets",
-        "google-genai",
-        "pydantic",
-        "sentence-transformers",
-        "matplotlib",
-        "scipy",
-        "huggingface-hub",
+    modal.Image.from_registry("vllm/vllm-openai:v0.5.5")
+    .dockerfile_commands("ENTRYPOINT []")
+    .run_commands(
+        "ln -sf /usr/bin/python3 /usr/bin/python",
+        "pip3 install 'datasets>=2.18.0' 'google-genai>=1.0.0' 'pydantic>=2.5.0' "
+        "'sentence-transformers>=2.7.0' 'matplotlib>=3.8.0' 'scipy>=1.12.0' "
+        "'huggingface-hub>=0.22.0'",
     )
     .add_local_dir(".", remote_path="/evoagent")
 )

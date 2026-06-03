@@ -188,7 +188,14 @@ def load_dataset_splits(
         )
 
     import os
-    hf_token = os.environ.get("HF_TOKEN")
+    hf_keys = [k for k in os.environ if "HF" in k or "HUGGING" in k.upper()]
+    logger.info("HF-related env vars present: %s", hf_keys)
+    hf_token = (
+        os.environ.get("HF_TOKEN")
+        or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        or os.environ.get("HUGGINGFACE_TOKEN")
+    )
+    logger.info("hf_token found: %s", bool(hf_token))
     logger.info("Loading dataset '%s' from HuggingFace…", dataset_id)
     ds = load_dataset(dataset_id, token=hf_token)
 

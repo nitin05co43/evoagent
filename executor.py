@@ -214,56 +214,41 @@ def evaluate(
     """
     Evaluate a strategy on a HuggingFace Dataset split.
 
-    Parameters
-    ----------
-    strategy:
-        The strategy to evaluate.
-    split:
-        Human-readable label for logging (e.g., "dev", "train_subset").
-    dataset:
-        A HuggingFace Dataset with columns: passage, question, choices (list or
-        dict), answer. The answer column should contain "A", "B", "C", or "D".
-    model:
-        A loaded QwenInference instance.
-
-    Returns
-    -------
-    EvalResult with per-question records and aggregate accuracy stats.
+    ViMMRC 2.0 has one row per passage, with multiple questions per row.
+    This function expands each row into individual (passage, question, choices,
+    gold) tuples before running inference.
     """
     logger.info(
-        "Evaluating strategy %s on %s split (%d examples).",
+        "Evaluating strategy %s on %s split (%d passages).",
         strategy.id[:8],
         split,
         len(dataset),
     )
     start_time = time.time()
 
-    # 1. Build all prompts up front so we can batch them efficiently.
+    # 1. Expand rows: each ViMMRC row has N questions per passage.
     formatted_prompts: list[str] = []
     metadata: list[dict[str, Any]] = []
 
-    for idx, row in enumerate(dataset):
-        passage, question, choices, gold = _parse_row(row, idx)
-        q_type = (
-            row.get("question_type") or classify_question_type(question)
-        )
-
-        user_message = build_prompt(strategy, passage, question, choices)
-        full_prompt = model.format_prompt(
-            system_message=_SYSTEM_MESSAGE,
-            user_message=user_message,
-        )
-        formatted_prompts.append(full_prompt)
-        metadata.append(
-            {
-                "idx": idx,
-                "passage": passage,
-                "question": question,
-                "choices": choices,
-                "gold": gold,
-                "q_type": q_type,
-            }
-        )
+    for row_idx, row in enumerate(dataset):
+        questions_list = _parse_row(row, row_idx)
+        for q_idx, (passage, question, choices, gold, q_type) in enumerate(questions_list):
+            user_message = build_prompt(strategy, passage, question, choices)
+            full_prompt = model.format_prompt(
+                system_message=_SYSTEM_MESSAGE,
+                user_message=user_message,
+            )
+            formatted_prompts.append(full_prompt)
+            metadata.append(
+                {
+                    "idx": f"{row_idx}_{q_idx}",
+                    "passage": passage,
+                    "question": question,
+                    "choices": choices,
+                    "gold": gold,
+                    "q_type": q_type,
+                }
+            )
 
     # 2. Run batched generation.
     logger.info("Running inference on %d examples…", len(formatted_prompts))
@@ -346,38 +331,48 @@ def evaluate(
 # ------------------------------------------------------------------
 
 
-def _parse_row(row: dict, idx: int) -> tuple[str, str, dict[str, str], str]:
+def _parse_row(row: dict, idx: int) -> list[tuple[str, str, dict[str, str], str, str]]:
     """
-    Normalise a dataset row into (passage, question, choices_dict, gold_letter).
+    Expand a ViMMRC 2.0 row into a list of (passage, question, choices, gold, q_type).
 
-    ViMMRC 2.0 stores choices as a list ["option1", ...] and the answer as an
-    index 0–3 or as a letter "A"–"D". This function normalises both formats.
+    Each row contains one passage (article) with N questions, N option-lists,
+    N answers, and N types. We expand to N individual tuples.
     """
-    passage = row.get("context") or row.get("passage") or row.get("article") or ""
-    question = row.get("question") or ""
+    letters = ["A", "B", "C", "D"]
+    passage = row.get("article") or row.get("context") or row.get("passage") or ""
 
-    # Choices: may be a list or a dict.
-    raw_choices = row.get("options") or row.get("choices") or {}
-    if isinstance(raw_choices, (list, tuple)):
-        letters = ["A", "B", "C", "D"]
-        choices = {letters[i]: str(v) for i, v in enumerate(raw_choices) if i < 4}
-    elif isinstance(raw_choices, dict):
-        choices = {k.upper(): str(v) for k, v in raw_choices.items()}
-    else:
-        choices = {}
+    questions_list = row.get("questions") or []
+    options_list = row.get("options") or []   # list of lists
+    answers_list = row.get("answers") or []   # list of letter strings e.g. ["C", "B"]
+    types_list = row.get("types") or []
 
-    # Answer: may be "A" or an integer index.
-    raw_answer = row.get("answer") or row.get("label") or ""
-    if isinstance(raw_answer, int):
-        letters = ["A", "B", "C", "D"]
-        gold = letters[raw_answer] if 0 <= raw_answer < 4 else "A"
-    elif isinstance(raw_answer, str):
-        # Strip noise: "A)", "a.", "(A)" -> "A"
-        cleaned = re.sub(r"[^A-Da-d]", "", raw_answer)
-        gold = cleaned[0].upper() if cleaned else "A"
-    else:
-        gold = "A"
+    results = []
+    for i, question in enumerate(questions_list):
+        # Choices for this question.
+        raw_opts = options_list[i] if i < len(options_list) else []
+        if isinstance(raw_opts, (list, tuple)):
+            choices = {letters[j]: str(v) for j, v in enumerate(raw_opts) if j < 4}
+        else:
+            choices = {}
 
-    return passage, question, choices, gold
+        # Gold answer.
+        raw_ans = answers_list[i] if i < len(answers_list) else ""
+        if isinstance(raw_ans, str):
+            cleaned = re.sub(r"[^A-Da-d]", "", raw_ans)
+            gold = cleaned[0].upper() if cleaned else "A"
+        elif isinstance(raw_ans, int):
+            gold = letters[raw_ans] if 0 <= raw_ans < 4 else "A"
+        else:
+            gold = "A"
+
+        # Question type.
+        q_type = (
+            str(types_list[i]) if i < len(types_list) and types_list[i]
+            else classify_question_type(question)
+        )
+
+        results.append((passage, question, choices, gold, q_type))
+
+    return results
 
 

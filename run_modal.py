@@ -6,9 +6,9 @@ image = (
     modal.Image.debian_slim()
     .pip_install(
         "torch",
+        "vllm",
         "transformers",
         "accelerate",
-        "bitsandbytes",
         "datasets",
         "google-genai",
         "pydantic",
@@ -33,12 +33,9 @@ def run():
     import os
     import subprocess
     os.chdir("/evoagent")
-    # Clear previous run so we start fresh with real data
     import shutil
     if os.path.exists("/runs/exp01"):
         shutil.rmtree("/runs/exp01")
-    env = os.environ.copy()
-    env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
     subprocess.run(
         [
             "python", "main.py",
@@ -46,11 +43,10 @@ def run():
             "--dataset", "uitnlp/vimmrc2.0",
             "--output-dir", "/runs/exp01",
             "--train-size", "100",
+            "--model", "Qwen/Qwen2.5-7B-Instruct-AWQ",
             "--gemini-model", "gemini-2.5-flash",
-            "--batch-size", "4",
         ],
         check=True,
-        env=env,
     )
     volume.commit()
 

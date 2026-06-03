@@ -72,7 +72,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset",
         type=str,
-        default="sonlam1102/vimmrc2.0",
+        default="uitnlp/vimmrc2.0",
         help="HuggingFace dataset ID for ViMMRC 2.0.",
     )
     parser.add_argument(
@@ -98,7 +98,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--model",
         type=str,
-        default="Qwen/Qwen2.5-7B-Instruct",
+        default="Qwen/Qwen2.5-7B-Instruct-AWQ",
         help="HuggingFace model ID or local path for inference.",
     )
     parser.add_argument(

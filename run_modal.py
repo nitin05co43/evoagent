@@ -19,7 +19,7 @@ volume = modal.Volume.from_name("evoagent-runs", create_if_missing=True)
 @app.function(
     image=image,
     gpu="T4",
-    timeout=7200,
+    timeout=21600,
     secrets=[modal.Secret.from_name("google"), modal.Secret.from_name("huggingface")],
     volumes={"/runs": volume},
 )
@@ -27,9 +27,6 @@ def run():
     import os
     import subprocess
     os.chdir("/evoagent")
-    import shutil
-    if os.path.exists("/runs/exp01"):
-        shutil.rmtree("/runs/exp01")
     subprocess.run(
         [
             "python", "main.py",

@@ -3,7 +3,10 @@ import modal
 app = modal.App("evoagent")
 
 image = (
-    modal.Image.debian_slim()
+    modal.Image.from_registry(
+        "nvidia/cuda:12.4.0-devel-ubuntu22.04",
+        add_python="3.11",
+    )
     .pip_install(
         "torch",
         "vllm",
@@ -36,6 +39,9 @@ def run():
     import shutil
     if os.path.exists("/runs/exp01"):
         shutil.rmtree("/runs/exp01")
+    env = os.environ.copy()
+    # Disable flashinfer JIT sampler — requires nvcc which may not be on PATH
+    env["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
     subprocess.run(
         [
             "python", "main.py",
@@ -47,6 +53,7 @@ def run():
             "--gemini-model", "gemini-2.5-flash",
         ],
         check=True,
+        env=env,
     )
     volume.commit()
 

@@ -40,7 +40,8 @@ def run():
     if os.path.exists("/runs/exp01"):
         shutil.rmtree("/runs/exp01")
     env = os.environ.copy()
-    # Disable flashinfer JIT sampler — requires nvcc which may not be on PATH
+    # T4 (compute 7.5) has issues with flashinfer; use xformers backend instead
+    env["VLLM_ATTENTION_BACKEND"] = "XFORMERS"
     env["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
     subprocess.run(
         [

@@ -40,7 +40,8 @@ def run():
     if os.path.exists("/runs/exp01"):
         shutil.rmtree("/runs/exp01")
     env = os.environ.copy()
-    # T4 (compute 7.5) has issues with flashinfer; use xformers backend instead
+    # vLLM V1 engine ignores VLLM_ATTENTION_BACKEND; force V0 where xformers works
+    env["VLLM_USE_V1"] = "0"
     env["VLLM_ATTENTION_BACKEND"] = "XFORMERS"
     env["VLLM_USE_FLASHINFER_SAMPLER"] = "0"
     subprocess.run(

@@ -79,7 +79,7 @@ class QwenInference:
         temperature: float = 0.0,
         use_4bit: bool = True,
         gpu_memory_utilization: float = 0.85,
-        max_model_len: int = 2048,
+        max_model_len: int = 4096,
     ):
         self.model_name_or_path = model_name_or_path
         self.max_new_tokens = max_new_tokens

@@ -134,6 +134,7 @@ class QwenInference:
             gpu_memory_utilization=self.gpu_memory_utilization,
             max_model_len=self.max_model_len,
             trust_remote_code=True,
+            enforce_eager=True,  # disable CUDA graphs; avoids flashinfer crash on T4
         )
 
         # Load tokenizer separately for apply_chat_template / count_tokens.

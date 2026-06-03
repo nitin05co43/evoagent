@@ -165,11 +165,20 @@ class QwenInference:
         sampling_params = SamplingParams(
             max_tokens=self.max_new_tokens,
             temperature=self.temperature if self.temperature > 0.0 else 0.0,
-            # vLLM requires top_p < 1.0 when temperature > 0
             top_p=0.95 if self.temperature > 0.0 else 1.0,
         )
 
-        outputs = self._llm.generate(prompts, sampling_params)
+        # Truncate prompts that exceed the context budget, preserving the end
+        # (which contains the question/choices) by trimming from the passage.
+        max_input = self.max_model_len - self.max_new_tokens
+        tokenized_inputs = []
+        for p in prompts:
+            ids = self._tokenizer.encode(p, add_special_tokens=False)
+            if len(ids) > max_input:
+                ids = ids[:max_input]
+            tokenized_inputs.append({"prompt_token_ids": ids})
+
+        outputs = self._llm.generate(tokenized_inputs, sampling_params)
 
         results: list[GenerationResult] = []
         for req_output in outputs:

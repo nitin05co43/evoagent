@@ -1,0 +1,24 @@
+# Core ML / inference
+torch>=2.1.0
+vllm==0.5.5                    # pinned: 0.6+ uses flashinfer which breaks on T4 (compute 7.5)
+transformers==4.44.2           # pinned: vllm==0.5.5 incompatible with transformers>=4.45
+accelerate>=0.27.0
+sentencepiece>=0.1.99          # Qwen tokeniser dependency
+
+# HuggingFace dataset loading
+datasets>=2.18.0
+huggingface-hub>=0.22.0
+
+# Google Gemini API (meta-agent calls)
+google-genai>=1.0.0
+
+# Pydantic for structured output validation
+pydantic>=2.5.0
+
+# Analysis / plotting
+matplotlib>=3.8.0
+numpy>=1.26.0
+sentence-transformers>=2.7.0   # Strategy diversity via embeddings
+
+# Optional but recommended
+scipy>=1.12.0                  # Used by sentence-transformers internally

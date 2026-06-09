@@ -158,7 +158,7 @@ def reflect(
     strategy: Strategy,
     eval_result: EvalResult,
     api_key: Optional[str] = None,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
     max_retries: int = 4,
 ) -> tuple[Reflection, int]:
     """

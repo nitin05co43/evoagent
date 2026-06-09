@@ -60,7 +60,8 @@ class StrategyMetadata:
     train_accuracy: accuracy on the training subset used for evaluation.
     parent_id: id of the strategy this was proposed from (None for seed).
     iteration: which EvoAgent iteration produced this strategy.
-    token_cost_claude: total Claude API tokens consumed proposing + reflecting.
+    token_cost_claude: total meta-agent tokens consumed proposing + reflecting.
+        Field name is kept for compatibility with existing histories.
     token_cost_qwen: total Qwen tokens consumed evaluating this strategy.
     extra: arbitrary key-value pairs for extensibility.
     """
@@ -162,7 +163,7 @@ class Reflection:
     hypothesis: a concrete, testable hypothesis for why the strategy failed
         in certain categories and what the next strategy should try.
     summary: one-paragraph prose summary of the reflection.
-    raw_response: the full Claude response, kept for debugging.
+    raw_response: the full meta-agent response, kept for debugging.
     """
 
     strategy_id: str
@@ -345,7 +346,7 @@ class StrategyHistory:
                     "cot_format": s.cot_format.value,
                     "dev_accuracy": s.metadata.dev_accuracy,
                     "train_accuracy": s.metadata.train_accuracy,
-                    "claude_tokens": s.metadata.token_cost_claude,
+                    "meta_tokens": s.metadata.token_cost_claude,
                     "qwen_tokens": s.metadata.token_cost_qwen,
                     "has_reflection": r is not None,
                 }
@@ -357,7 +358,7 @@ def make_seed_strategy() -> Strategy:
     """
     Build the iteration-0 baseline strategy: plain zero-shot Vietnamese prompt.
 
-    This establishes the ~52% baseline described in the assignment spec.
+    This establishes the seed baseline reported in the assignment spec.
     No chain-of-thought, no few-shot examples. The template is intentionally
     simple so students can see what a minimal strategy looks like.
     """

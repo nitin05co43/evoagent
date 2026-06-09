@@ -68,8 +68,14 @@ def plot_learning_curve(
     best_idx = int(np.argmax(devs))
     ax.scatter([iters[best_idx]], [devs[best_idx]], marker="*", s=200, color="gold", zorder=5, label=f"Best ({devs[best_idx]:.3f})")
 
-    # Draw baseline reference line at 0.52.
-    ax.axhline(0.52, linestyle=":", color="gray", linewidth=1, label="Baseline (~0.52)")
+    baseline = devs[0]
+    ax.axhline(
+        baseline,
+        linestyle=":",
+        color="gray",
+        linewidth=1,
+        label=f"Seed baseline ({baseline:.3f})",
+    )
 
     ax.set_xlabel("Iteration")
     ax.set_ylabel("Accuracy")
@@ -230,7 +236,14 @@ def failure_mode_report(
         for ax, (q_type, trend) in zip(axes_flat, sorted(type_trends.items())):
             iters, accs = zip(*sorted(trend))
             ax.plot(iters, accs, marker="o")
-            ax.axhline(0.52, linestyle=":", color="gray", linewidth=1)
+            first_strategy = history.strategies[0] if history.strategies else None
+            baseline = (
+                first_strategy.metadata.dev_accuracy
+                if first_strategy and first_strategy.metadata.dev_accuracy is not None
+                else None
+            )
+            if baseline is not None:
+                ax.axhline(baseline, linestyle=":", color="gray", linewidth=1)
             ax.set_title(q_type)
             ax.set_ylabel("Accuracy")
             ax.set_xlabel("Iteration")

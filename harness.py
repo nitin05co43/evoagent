@@ -9,7 +9,8 @@ run_evoagent() orchestrates T iterations of:
   5. Save state to disk.
 
 State is saved after every step so interrupted runs can be resumed.
-The harness tracks total token usage across both Qwen inference and Claude API.
+The harness tracks total token usage across both Qwen inference and meta-agent
+calls.
 """
 
 from __future__ import annotations
@@ -39,14 +40,18 @@ class TokenBudget:
 
     qwen_input: int = 0
     qwen_output: int = 0
-    claude_total: int = 0
+    meta_total: int = 0
 
     def add_eval(self, result: EvalResult) -> None:
         self.qwen_input += result.total_input_tokens
         self.qwen_output += result.total_output_tokens
 
+    def add_meta(self, tokens: int) -> None:
+        self.meta_total += tokens
+
     def add_claude(self, tokens: int) -> None:
-        self.claude_total += tokens
+        """Backward-compatible alias for older call sites and histories."""
+        self.add_meta(tokens)
 
     @property
     def qwen_total(self) -> int:
@@ -55,7 +60,7 @@ class TokenBudget:
     def summary(self) -> str:
         return (
             f"Token usage — Qwen: {self.qwen_total:,} (in={self.qwen_input:,}, "
-            f"out={self.qwen_output:,}) | Meta-agent: {self.claude_total:,}"
+            f"out={self.qwen_output:,}) | Meta-agent: {self.meta_total:,}"
         )
 
 
@@ -68,7 +73,7 @@ def run_evoagent(
     resume_from: Optional[Path] = None,
     early_stop_accuracy: float = 1.0,
     gemini_api_key: Optional[str] = None,
-    gemini_model: str = "gemini-2.0-flash",
+    gemini_model: str = "gemini-2.5-flash",
     self_optimize: bool = False,
 ) -> StrategyHistory:
     """
@@ -151,15 +156,15 @@ def run_evoagent(
         # ----------------------------------------------------------------
         # Step 1: Propose (or use seed for iteration 0)
         # ----------------------------------------------------------------
-        claude_tokens_this_iter = 0
+        meta_tokens_this_iter = 0
 
         if iteration == 0 and not history.strategies:
             strategy = make_seed_strategy()
             logger.info("Using seed strategy (iteration 0): id=%s.", strategy.id[:8])
         elif self_optimize:
             strategy, propose_tokens = propose_self(history, model=model)
-            budget.add_claude(propose_tokens)
-            claude_tokens_this_iter += propose_tokens
+            budget.add_meta(propose_tokens)
+            meta_tokens_this_iter += propose_tokens
             logger.info(
                 "Self-proposed strategy %s (iteration %d). Tokens: %d.",
                 strategy.id[:8], iteration, propose_tokens,
@@ -170,8 +175,8 @@ def run_evoagent(
                 api_key=gemini_api_key,
                 model=gemini_model,
             )
-            budget.add_claude(propose_tokens)
-            claude_tokens_this_iter += propose_tokens
+            budget.add_meta(propose_tokens)
+            meta_tokens_this_iter += propose_tokens
             logger.info(
                 "Proposed strategy %s (iteration %d). Proposal tokens: %d.",
                 strategy.id[:8], iteration, propose_tokens,
@@ -252,9 +257,9 @@ def run_evoagent(
                         api_key=gemini_api_key,
                         model=gemini_model,
                     )
-                budget.add_claude(reflect_tokens)
-                claude_tokens_this_iter += reflect_tokens
-                strategy.metadata.token_cost_claude = claude_tokens_this_iter
+                budget.add_meta(reflect_tokens)
+                meta_tokens_this_iter += reflect_tokens
+                strategy.metadata.token_cost_claude = meta_tokens_this_iter
                 history.update_strategy_metadata(strategy.id, strategy.metadata)
                 history.append_reflection(reflection)
                 _save_reflection_json(reflection, output_dir, iteration)
@@ -370,6 +375,6 @@ def _print_leaderboard(history: StrategyHistory) -> None:
             r["cot_format"],
             dev,
             train,
-            r["claude_tokens"],
+            r["meta_tokens"],
             r["qwen_tokens"],
         )

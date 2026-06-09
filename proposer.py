@@ -215,7 +215,7 @@ def _build_user_message(history: StrategyHistory) -> str:
 def propose(
     history: StrategyHistory,
     api_key: Optional[str] = None,
-    model: str = "gemini-2.0-flash",
+    model: str = "gemini-2.5-flash",
     max_retries: int = 4,
 ) -> tuple[Strategy, int]:
     """
@@ -228,7 +228,7 @@ def propose(
     api_key:
         Google Gemini API key. If None, reads from GOOGLE_API_KEY env var.
     model:
-        Gemini model to use. gemini-2.0-flash is free and fast.
+        Gemini model to use.
     max_retries:
         Number of retries on API or validation failure (exponential backoff).
 

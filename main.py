@@ -130,7 +130,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--gemini-model",
         type=str,
-        default="gemini-2.0-flash",
+        default="gemini-2.5-flash",
         help="Gemini model ID for propose and reflect calls.",
     )
     parser.add_argument(

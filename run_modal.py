@@ -41,6 +41,36 @@ def run():
     )
     volume.commit()
 
+@app.function(
+    image=image,
+    gpu="T4",
+    timeout=21600,
+    secrets=[modal.Secret.from_name("huggingface")],
+    volumes={"/runs": volume},
+)
+def run_self():
+    """Self-optimization: Qwen guides itself — no Gemini API needed."""
+    import os
+    import subprocess
+    os.chdir("/evoagent")
+    subprocess.run(
+        [
+            "python", "main.py",
+            "--T", "5",
+            "--dataset", "uitnlp/vimmrc2.0",
+            "--output-dir", "/runs/exp_self",
+            "--train-size", "100",
+            "--model", "Qwen/Qwen2.5-7B-Instruct-AWQ",
+            "--self-optimize",
+        ],
+        check=True,
+    )
+    volume.commit()
+
 @app.local_entrypoint()
 def main():
     run.remote()
+
+@app.local_entrypoint()
+def self():
+    run_self.remote()

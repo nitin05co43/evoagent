@@ -133,6 +133,12 @@ def parse_args() -> argparse.Namespace:
         default="gemini-2.0-flash",
         help="Gemini model ID for propose and reflect calls.",
     )
+    parser.add_argument(
+        "--self-optimize",
+        action="store_true",
+        default=False,
+        help="Use the inference model itself as meta-agent (self-optimization). No Gemini API needed.",
+    )
 
     # Output
     parser.add_argument(
@@ -266,6 +272,7 @@ def main() -> None:
         resume_from=Path(args.resume) if args.resume else None,
         early_stop_accuracy=args.early_stop,
         gemini_model=args.gemini_model,
+        self_optimize=args.self_optimize,
     )
 
     # ----------------------------------------------------------------

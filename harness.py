@@ -26,6 +26,8 @@ from executor import EvalResult, evaluate
 from model import QwenInference
 from proposer import propose
 from reflector import reflect
+from self_proposer import propose_self
+from self_reflector import reflect_self
 from strategy import Strategy, StrategyHistory, StrategyMetadata, make_seed_strategy
 
 logger = logging.getLogger(__name__)
@@ -53,7 +55,7 @@ class TokenBudget:
     def summary(self) -> str:
         return (
             f"Token usage — Qwen: {self.qwen_total:,} (in={self.qwen_input:,}, "
-            f"out={self.qwen_output:,}) | Claude: {self.claude_total:,}"
+            f"out={self.qwen_output:,}) | Meta-agent: {self.claude_total:,}"
         )
 
 
@@ -67,6 +69,7 @@ def run_evoagent(
     early_stop_accuracy: float = 1.0,
     gemini_api_key: Optional[str] = None,
     gemini_model: str = "gemini-2.0-flash",
+    self_optimize: bool = False,
 ) -> StrategyHistory:
     """
     Run the EvoAgent loop for up to T iterations.
@@ -88,10 +91,10 @@ def run_evoagent(
     early_stop_accuracy:
         Stop the loop when dev accuracy reaches this threshold. Default 1.0
         (never stop early in practice).
-    anthropic_client:
-        Pre-instantiated Anthropic client. If None, one is created automatically.
-    claude_model:
-        Which Claude model to use for propose and reflect calls.
+    gemini_api_key:
+        Google Gemini API key. If None, reads from GOOGLE_API_KEY env var.
+    gemini_model:
+        Which Gemini model to use for propose and reflect calls.
 
     Returns
     -------
@@ -153,6 +156,14 @@ def run_evoagent(
         if iteration == 0 and not history.strategies:
             strategy = make_seed_strategy()
             logger.info("Using seed strategy (iteration 0): id=%s.", strategy.id[:8])
+        elif self_optimize:
+            strategy, propose_tokens = propose_self(history, model=model)
+            budget.add_claude(propose_tokens)
+            claude_tokens_this_iter += propose_tokens
+            logger.info(
+                "Self-proposed strategy %s (iteration %d). Tokens: %d.",
+                strategy.id[:8], iteration, propose_tokens,
+            )
         else:
             strategy, propose_tokens = propose(
                 history,
@@ -163,9 +174,7 @@ def run_evoagent(
             claude_tokens_this_iter += propose_tokens
             logger.info(
                 "Proposed strategy %s (iteration %d). Proposal tokens: %d.",
-                strategy.id[:8],
-                iteration,
-                propose_tokens,
+                strategy.id[:8], iteration, propose_tokens,
             )
 
         history.append_strategy(strategy)
@@ -230,12 +239,19 @@ def run_evoagent(
         if iteration < T - 1:
             logger.info("Running reflection…")
             try:
-                reflection, reflect_tokens = reflect(
-                    strategy=strategy,
-                    eval_result=dev_result,
-                    api_key=gemini_api_key,
-                    model=gemini_model,
-                )
+                if self_optimize:
+                    reflection, reflect_tokens = reflect_self(
+                        strategy=strategy,
+                        eval_result=dev_result,
+                        model=model,
+                    )
+                else:
+                    reflection, reflect_tokens = reflect(
+                        strategy=strategy,
+                        eval_result=dev_result,
+                        api_key=gemini_api_key,
+                        model=gemini_model,
+                    )
                 budget.add_claude(reflect_tokens)
                 claude_tokens_this_iter += reflect_tokens
                 strategy.metadata.token_cost_claude = claude_tokens_this_iter
@@ -342,7 +358,7 @@ def _print_leaderboard(history: StrategyHistory) -> None:
     rows = history.summary_table()
     if not rows:
         return
-    header = f"{'Iter':>4}  {'ID':>8}  {'CoT':>10}  {'Dev Acc':>8}  {'Train Acc':>9}  {'Claude tok':>10}  {'Qwen tok':>8}"
+    header = f"{'Iter':>4}  {'ID':>8}  {'CoT':>10}  {'Dev Acc':>8}  {'Train Acc':>9}  {'Meta tok':>10}  {'Qwen tok':>8}"
     logger.info("Leaderboard:\n%s", header)
     for r in rows:
         dev = f"{r['dev_accuracy']:.3f}" if r["dev_accuracy"] is not None else "  —  "

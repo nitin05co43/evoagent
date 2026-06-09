@@ -215,6 +215,38 @@ class QwenInference:
             add_generation_prompt=True,
         )
 
+    def generate_text(
+        self,
+        prompt: str,
+        max_new_tokens: int = 1024,
+        temperature: float = 0.7,
+    ) -> str:
+        """
+        Single unconstrained text generation — used by self_proposer / self_reflector.
+
+        Unlike generate_batch() which is optimised for high-throughput MC inference,
+        this is for low-volume, long-form generation (strategy proposals, reflections).
+        Returns the raw generated text string.
+        """
+        if self._llm is None:
+            raise RuntimeError("Call load() before generate_text().")
+
+        from vllm import SamplingParams
+
+        sampling_params = SamplingParams(
+            max_tokens=max_new_tokens,
+            temperature=temperature,
+            top_p=0.95,
+        )
+        max_input = self.max_model_len - max_new_tokens
+        ids = self._tokenizer.encode(prompt, add_special_tokens=False)
+        if len(ids) > max_input:
+            ids = ids[:max_input]
+            prompt = self._tokenizer.decode(ids, skip_special_tokens=True)
+
+        outputs = self._llm.generate([prompt], sampling_params)
+        return outputs[0].outputs[0].text.strip()
+
     def count_tokens(self, text: str) -> int:
         if self._tokenizer is None:
             raise RuntimeError("Call load() before count_tokens().")
